@@ -1,0 +1,90 @@
+---
+title: "Project2"
+date: "2024-12-09"
+output: word_document
+---
+
+```{r}
+library(dplyr)
+library(readxl)
+library(tidyr)
+
+```
+
+## R Markdown
+
+
+```{r}
+# Load the specific sheet from the first Excel file
+student_data <- read_excel("C:\\Users\\tenzi\\Downloads\\StudentData.xlsx", sheet = "Subset")
+
+# Load the specific sheet from the second Excel file
+student_evaluation <- read_excel("C:\\Users\\tenzi\\Downloads\\StudentEvaluation.xlsx", sheet = "Subset (2)")
+
+```
+
+## Including Plots
+```{r}
+# Inspect the structure of the data
+glimpse(student_data)
+glimpse(student_evaluation)
+```
+```{r}
+# Check for missing values
+sum(is.na(student_data))
+sum(is.na(student_evaluation))
+```
+```{r}
+# View a summary of the data
+summary(student_data)
+summary(student_evaluation)
+```
+
+```{r}
+head(student_data)
+head(student_evaluation)
+
+```
+
+```{r}
+# Remove rows with missing data
+student_data <- student_data %>% drop_na()
+student_evaluation <- student_evaluation %>% drop_na()
+
+```
+
+```{r}
+
+# Check for missing values
+sum(is.na(student_data))
+sum(is.na(student_evaluation))
+
+
+```
+```{r}
+# Standardize column names
+student_data <- student_data %>% rename_all(tolower) %>% rename_all(gsub, pattern = " ", replacement = "_")
+student_evaluation <- student_evaluation %>% rename_all(tolower) %>% rename_all(gsub, pattern = " ", replacement = "_")
+
+
+```
+
+```{r}
+# Remove duplicates
+student_data <- student_data %>% distinct()
+student_evaluation <- student_evaluation %>% distinct()
+```
+
+```{r}
+# Convert character columns to factors and ensure date columns are correctly formatted
+student_data <- student_data %>%
+  mutate(across(where(is.character), as.factor))
+
+student_evaluation <- student_evaluation %>%
+  mutate(across(where(is.character), as.factor))
+```
+```{r}
+# Data types
+str(student_data)
+
+```
