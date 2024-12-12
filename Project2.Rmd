@@ -290,3 +290,134 @@ for (plot in cat_plots) {
 ```
 
 # Data Pre-Processing
+
+
+Step 1: Identify numeric columns for transformations
+
+```{r}
+# Step 1: Identify numeric columns for transformations
+numeric_columns <- X %>% select_if(is.numeric)
+```
+
+Step 2: Apply Yeo-Johnson transformation (for non-normality)
+
+```{r}
+preProcess_numeric <- preProcess(numeric_columns, method = "YeoJohnson")
+X[names(numeric_columns)] <- predict(preProcess_numeric, numeric_columns)
+```
+
+Step 3: Check for outliers using interquartile range (IQR) method
+
+```{r}
+check_outliers <- function(df) {
+  df %>%
+    summarise(across(where(is.numeric), ~ sum(. > (quantile(., 0.75) + 1.5 * IQR(.)) |
+                                      . < (quantile(., 0.25) - 1.5 * IQR(.)), na.rm = TRUE)))
+}
+
+outlier_counts <- check_outliers(X)
+outlier_counts
+```
+
+Step 4: Scale numeric data using robust scaling (median and IQR)
+
+```{r}
+robust_scale <- function(df) {
+  df %>% mutate(across(where(is.numeric), ~ (. - median(.)) / IQR(.), .names = "{.col}_scaled"))
+}
+
+
+X <- robust_scale(X)
+```
+
+Step 5: Check for multicollinearity using correlation matrix
+
+```{r}
+cor_matrix <- X %>% select_if(is.numeric) %>% cor()
+```
+
+Visualize the correlation matrix
+
+```{r}
+cor_matrix_plot <- cor_matrix %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable") %>%
+  pivot_longer(-Variable, names_to = "Correlated_Variable", values_to = "Correlation") %>%
+  filter(Variable != Correlated_Variable, abs(Correlation) > 0.7) %>%
+  ggplot(aes(x = Variable, y = Correlated_Variable, fill = Correlation)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Correlation Matrix", x = "", y = "")
+
+print(cor_matrix_plot)
+```
+
+Identify highly correlated variables (threshold = 0.7)
+
+```{r}
+find_highly_correlated <- function(cor_matrix, threshold = 0.7) {
+  cor_pairs <- as.data.frame(as.table(cor_matrix)) %>%
+    filter(Var1 != Var2, abs(Freq) > threshold)
+  cor_pairs
+}
+high_corr <- find_highly_correlated(cor_matrix)
+high_corr
+```
+
+
+Drop one variable from each highly correlated pair:
+
+
+```{r}
+vars_to_remove <- unique(high_corr$Var2) # Replace with actual variable names if needed
+# X <- X %>% select(-all_of(vars_to_remove, .env = environment()))
+```
+
+
+Step 6: Reassess normality, outlier counts, and multicollinearity. Normality after transformation: 
+
+```{r}
+shapiro_test_results <- lapply(X %>% select_if(is.numeric), shapiro.test)
+normality_summary <- sapply(shapiro_test_results, function(x) x$p.value)
+normality_summary
+```
+
+Outlier reassessment: 
+
+```{r}
+outlier_counts_after <- check_outliers(X)
+outlier_counts_after
+```
+
+Correlation reassessment:
+
+```{r}
+cor_matrix_after <- X %>% select_if(is.numeric) %>% cor()
+```
+
+Ensure multicollinearity is addressed: 
+
+```{r}
+cor_matrix_plot_after <- cor_matrix_after %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable") %>%
+  pivot_longer(-Variable, names_to = "Correlated_Variable", values_to = "Correlation") %>%
+  filter(Variable != Correlated_Variable, abs(Correlation) > 0.7) %>%
+  ggplot(aes(x = Variable, y = Correlated_Variable, fill = Correlation)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Correlation Matrix (After Adjustment)", x = "", y = "")
+
+print(cor_matrix_plot_after)
+```
+
+Save the preprocessed data for modeling: 
+```{r}
+# Save the preprocessed data for modeling
+write.csv(X, "preprocessed_student_data.csv", row.names = FALSE)
+```
+
+
+
