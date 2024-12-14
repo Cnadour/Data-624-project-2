@@ -38,12 +38,12 @@ testing_data <- read_excel("StudentEvaluation.xlsx", sheet = "Subset (2)")
 
 training_data <-training_data[!is.na(training_data[['PH']]), ]
 
-X <- select(training_data, -PH)
+X <- dplyr::select(training_data, -PH)
 y <- training_data$PH
 
 # no PH values are provided in studentEvaluation.xlsx, so we cannot use it
 # for testing. We can only use it to make predictions. 
-eval_X <- select(testing_data, -PH)
+eval_X <- dplyr::select(testing_data, -PH)
 ```
 
 ```{r}
@@ -222,7 +222,7 @@ normality_results
 The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity. 
 
 ```{r}
-corr_matrix <- cor(select(X, where(is.numeric)))
+corr_matrix <- cor(dplyr::select(X, where(is.numeric)))
 ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   theme(
     axis.text.x = element_text(size = 6),  
@@ -253,7 +253,7 @@ plot_scatter_with_fit <- function(X, y) {
   return(plots)
 }
 
-scatter_plots <- plot_scatter_with_fit(select(X, where(is.numeric)), y)
+scatter_plots <- plot_scatter_with_fit(dplyr::select(X, where(is.numeric)), y)
 
 for (plot in scatter_plots) {
   print(plot)
@@ -283,7 +283,7 @@ plot_categorical_distributions <- function(df) {
   return(plots)
 }
 
-cat_plots <- plot_categorical_distributions(select(X, where(is.factor)))
+cat_plots <- plot_categorical_distributions(dplyr::select(X, where(is.factor)))
 
 for (plot in cat_plots) {
   print(plot)
@@ -445,8 +445,108 @@ RMSE(predict(model_nnet, test), test$ph)
 ```
 ##  Best model is Neutral model 
 
+
+
+## KNN
+
+### Data Partition
+
 ```{r}
+set.seed(123) # for reproducibility
+train_index <- createDataPartition(y, p = 0.8, list = FALSE)
+X_train <- X[train_index, ]
+y_train <- y[train_index]
+
+X_test <- X[-train_index, ]
+y_test <- y[-train_index]
+
+# Confirm that dimensions match
+dim(X_train); length(y_train)
+dim(X_test); length(y_test)
+
+```
+
+```{r}
+set.seed(123)
+knn_model <- train(
+  x = X_train,
+  y = y_train,
+  method = "knn",
+  tuneGrid = k_values,
+  trControl = train_control,
+)
+
+knn_model
+plot(knn_model)
+
+```
+```{r}
+# Predictions on the test set
+test_predictions <- predict(knn_model, newdata = X_test)
+
+# Evaluate performance
+rmse <- sqrt(mean((test_predictions - y_test)^2))
+mae <- mean(abs(test_predictions - y_test))
+r2 <- cor(test_predictions, y_test)^2
+
+cat("KNN RMSE:", rmse, "\n")
+cat("KNN MAE:", mae, "\n")
+cat("KNN R-squared:", r2, "\n")
+
+```
+## Random Forest with bootstrapping
+
+```{r}
+library(caret)
+library(randomForest)
+set.seed(123)
+
+# Define training control with bootstrapping
+train_control <- trainControl(
+  method = "boot",    
+  number = 50,        
+  verboseIter = FALSE # Set TRUE to see training progress
+)
+
+```
+
+```{r}
+# Train the random forest model
+rf_model <- train(
+  x = X_train,
+  y = y_train,
+  method = "rf",
+  trControl = train_control,
+  tuneLength = 3  # Or customize hyperparameters via tuneGrid
+)
+
+```
+
+```{r}
+# If multiple 'mtry' values were tried, you'll see a plot of performance vs. mtry
+plot(rf_model)
+
+```
+
+```{r}
+# Generate predictions for the test set
+rf_predictions <- predict(rf_model, newdata = X_test)
+
+# Evaluate performance (e.g., for regression)
+rmse_rf <- sqrt(mean((rf_predictions - y_test)^2))
+r2_rf   <- cor(rf_predictions, y_test)^2
+mae_rf  <- mean(abs(rf_predictions - y_test))
+
+# Print results
+cat("RF RMSE:", rmse_rf, "\n")
+cat("RF R-squared:", r2_rf, "\n")
+cat("RF MAE:", mae_rf, "\n")
+
 
 
 ```
+## Based on the metrics, the random forest model provides better performance indcated by the lower RMSE, MAE and highter R squared.   
+
+
+
 
