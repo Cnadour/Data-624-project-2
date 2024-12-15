@@ -1,0 +1,560 @@
+---
+title: "Project2"
+date: "2024-12-09"
+output:
+  word_document:
+    toc: yes
+  pdf_document: default
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+---
+
+# Packages and Setup
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(caret)
+library(ggcorrplot)
+library(gridExtra)
+```
+
+# Data Cleaning
+
+
+```{r}
+# Load the specific sheet from the first Excel file
+training_data <- read_excel("StudentData.xlsx", sheet = "Subset")
+
+# Load the specific sheet from the second Excel file
+testing_data <- read_excel("StudentEvaluation.xlsx", sheet = "Subset (2)")
+
+```
+
+```{r}
+# right away, remove any observations with no PH value.
+
+training_data <-training_data[!is.na(training_data[['PH']]), ]
+
+X <- dplyr::select(training_data, -PH)
+y <- training_data$PH
+
+# no PH values are provided in studentEvaluation.xlsx, so we cannot use it
+# for testing. We can only use it to make predictions. 
+eval_X <- dplyr::select(testing_data, -PH)
+```
+
+```{r}
+# Inspect the structure of the data
+glimpse(X)
+glimpse(eval_X)
+```
+
+```{r}
+# Check for missing values
+sum(is.na(X))
+sum(is.na(eval_X))
+```
+
+```{r}
+# View a summary of the data
+summary(X)
+summary(eval_X)
+```
+
+```{r}
+head(X)
+head(eval_X)
+```
+
+```{r}
+
+# Remove rows with missing data
+y <- y[complete.cases(X)] 
+X <- X %>% drop_na()
+
+eval_X <- eval_X %>% drop_na()
+```
+
+```{r}
+# Standardize column names
+X <- X %>% rename_all(tolower) %>% 
+  rename_all(gsub, pattern = " ", replacement = "_")
+eval_X <- eval_X %>% rename_all(tolower) %>% 
+  rename_all(gsub, pattern = " ", replacement = "_")
+```
+
+```{r}
+# remove duplicates
+X <- X %>% distinct()
+eval_X <- eval_X %>% distinct()
+```
+
+```{r}
+# remove the columns that only have 1 unique value
+
+single_value_cols <- sapply(X, function(col) length(unique(col)) == 1)
+X <- X[, !single_value_cols, drop = FALSE]
+eval_X <- eval_X[, !single_value_cols, drop = FALSE]
+
+```
+
+
+```{r}
+missing_train <- sapply(X, function(col) sum(is.na(col)))
+missing_test <- sapply(eval_X, function(col) sum(is.na(col)))
+
+print(missing_train)
+print(missing_test)
+```
+
+```{r}
+# Convert character columns to factors and ensure date columns are correctly formatted
+X <- X %>%
+  mutate(across(where(is.character), as.factor))
+
+eval_X <- eval_X %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+# one-hot-encode the brand_code field with dummy variables
+encode_var <- function(df, col){
+  ohm <- model.matrix(~ . - 1, data = df[, col, drop = FALSE])
+  ohm <- as.data.frame(ohm)
+  ohm <- lapply(ohm, as.factor)
+  return(cbind(df[ , !names(df) %in% col, drop = FALSE], ohm))
+}
+
+X <- encode_var(X, 'brand_code')
+eval_X <- encode_var(eval_X, 'brand_code')
+```
+
+```{r}
+# Data types
+str(X)
+```
+
+
+
+
+# EDA
+
+The cell below creates a function that can be used to count the number of outliers in each column of a dataframe: 
+
+```{r}
+count_outliers <- function(dataframe) {
+  outlier_counts <- sapply(dataframe, function(column) {
+    if (is.numeric(column)) {
+      Q1 <- quantile(column, 0.25, na.rm = TRUE)
+      Q3 <- quantile(column, 0.75, na.rm = TRUE)
+      IQR <- Q3 - Q1
+      lower_bound <- Q1 - 1.5 * IQR
+      upper_bound <- Q3 + 1.5 * IQR
+      sum(column < lower_bound | column > upper_bound, na.rm = TRUE)
+    } else {
+      NA
+    }
+  })
+  return(outlier_counts)
+}
+```
+
+The `count_outliers` function is used below to plot the number of outliers present in each predictor field:
+
+```{r}
+outlier_counts <- count_outliers(X)
+outlier_counts <- data.frame(
+  Column = names(outlier_counts),
+  Outliers = as.numeric(outlier_counts)
+)
+outlier_counts <- na.omit(outlier_counts)
+
+
+ggplot(outlier_counts, aes(x = reorder(Column, -Outliers), y = Outliers)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(
+    title = "# of Outliers Present in Predictor Fields",
+    x = "Variable Name",
+    y = "Number of Outliers"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+```
+
+Next, the cell below includes function that tests whether or not each column within the dataframe is normal. 
+
+```{r}
+test_normality <- function(dataframe) {
+  results <- lapply(dataframe, function(column) {
+    if (is.numeric(column)) {
+      test_result <- tryCatch(
+        shapiro.test(column),
+        error = function(e) NULL # handle errors (e.g., small sample size)
+      )
+      if (!is.null(test_result)) {
+        return(data.frame(
+          Statistic = test_result$statistic,
+          P_Value = test_result$p.value
+        ))
+      } else {
+        return(data.frame(Statistic = NA, P_Value = NA))
+      }
+    } else {
+      # return NA for non-numeric columns
+      return(data.frame(Statistic = NA, P_Value = NA))
+    }
+  })
+  
+  # combine results into a dataframe
+  results_df <- do.call(rbind, results)
+  rownames(results_df) <- names(dataframe)
+  return(results_df)
+}
+
+normality_results <- test_normality(X)
+normality_results
+```
+
+The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity. 
+
+```{r}
+corr_matrix <- cor(dplyr::select(X, where(is.numeric)))
+ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
+  theme(
+    axis.text.x = element_text(size = 6),  
+    axis.text.y = element_text(size = 6)  
+  )
+```
+
+The cell below produces scatterplots of each explanatory field with the predictor variable PH. Each scatterplot includes the correlation coefficent and a best fit line relating the two fields. 
+
+```{r, message=FALSE}
+plot_scatter_with_fit <- function(X, y) {
+  plots <- list() 
+  
+  for (col in names(X)) {
+    correlation <- cor(X[[col]], y)  
+    plot <- ggplot(data = data.frame(x = X[[col]], y = y), aes(x = x, y = y)) +
+      geom_point() +
+      geom_smooth(method = "lm", se = FALSE, color = "red") +  
+      labs(
+        subtitle = paste("Correlation:", round(correlation, 2)),
+        x = col,
+        y = "PH"
+      ) +
+      theme_minimal()
+    plots[[col]] <- plot
+  }
+  
+  return(plots)
+}
+
+scatter_plots <- plot_scatter_with_fit(dplyr::select(X, where(is.numeric)), y)
+
+for (plot in scatter_plots) {
+  print(plot)
+}
+```
+
+The cell below plots the distributions of the categorical features in `X`:
+
+```{r, message=FALSE}
+plot_categorical_distributions <- function(df) {
+  # Identify categorical columns
+  categorical_columns <- 
+    names(df)[sapply(df, is.factor) | sapply(df, is.character)]
+  
+  # Create bar plots for each categorical column
+  plots <- lapply(categorical_columns, function(column) {
+    ggplot(df, aes_string(x = column)) +
+      geom_bar(fill = "steelblue", color = "black") +
+      labs(
+        title = paste("Distribution of", column),
+        x = column,
+        y = "Count"
+      ) +
+      theme_minimal()
+  })
+  
+  return(plots)
+}
+
+cat_plots <- plot_categorical_distributions(dplyr::select(X, where(is.factor)))
+
+for (plot in cat_plots) {
+  print(plot)
+}
+
+```
+
+##  Models building:
+
+```{r}
+
+library(janitor)
+training_data <- read_excel("StudentData.xlsx", sheet = "Subset")
+t_data <- clean_names(training_data)
+t_data <- as_tibble(t_data)
+t_data <- t_data %>% 
+  mutate(brand_code = ifelse(is.na(brand_code), "A",brand_code))
+
+#Change brand code variable to factor
+t_data_mod <- t_data %>% mutate(brand_code = factor(brand_code, levels = sort(unique(brand_code))))
+  
+#Remove NA values from the dataset
+t_data_mod <- t_data_mod %>% drop_na()
+# remove duplicates:
+t_data_mod <- t_data_mod %>% distinct()
+# Standardize column names
+t_data_mod <- t_data_mod %>% rename_all(tolower) %>% 
+  rename_all(gsub, pattern = " ", replacement = "_")
+# remove the columns that only have 1 unique valu
+ingle_value_cols <- sapply(X, function(col) length(unique(col)) == 1)
+X <- X[, !single_value_cols, drop = FALSE]
+```
+
+## traing data 
+
+```{r}
+
+set.seed(123)
+
+index <- createDataPartition(t_data_mod$brand_code, p=0.8, list=FALSE)
+
+train <- t_data_mod[index,]
+test <- t_data_mod[-index,]
+
+trainX <- train %>% select(-ph)
+trainY <- train %>% select(ph)
+
+testX <- test %>% select(-ph)
+testY <- test %>% select(ph)
+
+set.seed(123)
+
+train_up <- upSample(x=train[,-ncol(train)],y=train$brand_code)
+train_up <- train_up %>% select(-Class)
+
+```
+
+
+```{r}
+
+# linear regression
+
+model_lm1 <- lm(ph ~ ., data=train_up)
+summary(model_lm1)
+
+
+```
+
+
+```{r}
+
+model_lm2 <- lm(ph ~ . -alch_rel -air_pressurer -pressure_vacuum -density
+               -filler_speed -filler_level -psc_co2 -pressure_setpoint -psc, data=train_up)
+summary(model_lm2)
+
+```
+##  Throught our backward elimination process we counldn't improve R-squared. Next we will check the reliability of the model using our test dataset.
+
+```{r}
+
+predict(model_lm1, test)
+
+```
+
+
+```{r}
+
+RMSE(predict(model_lm1, test), test$ph)
+
+```
+
+##  Decision Tree
+```{r}
+
+# # Tree with selected variables based on Linear Regression model1::
+library(rpart)
+set.seed(123)
+model_tree1 <- rpart(ph ~., data = train)
+predict(model_tree1, test)
+
+
+```
+
+
+```{r}
+
+RMSE(predict(model_tree1, test), test$ph)
+```
+
+
+```{r}
+
+
+# Tree with selected variables based on Linear Regression model2:
+
+set.seed(1234)
+model_tree2 <- rpart(ph ~ . -alch_rel -air_pressurer -pressure_vacuum -density
+               -filler_speed -filler_level -psc_co2 -pressure_setpoint, data=train)
+predict(model_tree2, test)
+
+```
+
+
+```{r}
+RMSE(predict(model_tree2, test), test$ph)
+
+```
+
+
+```{r}
+plot(model_tree1, uniform=TRUE, compress=FALSE, margin=.015)
+text(model_tree1, all=TRUE, cex=.5)
+```
+
+
+```{r}
+
+plot(model_tree2, uniform=TRUE, compress=FALSE, margin=.015)
+text(model_tree2, all=TRUE, cex=.5)
+
+```
+## Tree 2 is better model with higher RMSE 0.1335446
+
+
+# Neutral model: 
+
+```{r}
+
+library(nnet)
+
+my.grid <- expand.grid(.decay = c(0.5,0,1), .size=c(5,6,7))
+
+model_nnet <- train(ph ~ carb_volume, data=train, method="nnet",
+      maxit=1000, tuneGrid = my.grid, trace =F, linout = 1)
+
+```
+
+
+```{r}
+
+predict(model_nnet, test)
+
+```
+
+
+```{r}
+RMSE(predict(model_nnet, test), test$ph)
+```
+##  Best model is Neutral model 
+
+
+## Random Forest
+library(caret)
+
+
+
+```{r}
+RMSE(predict(model_nnet, test), test$ph)
+RMSE(predict(model_tree2, test), test$ph)
+RMSE(predict(model_lm1, test), test$ph)
+
+```
+
+
+```{r}
+# Load Necessary Libraries
+library(caret)
+library(randomForest)
+
+trainY_vec <- trainY$ph
+
+#  Training the Random Forest Model
+rfModel <- randomForest(
+  x = trainX,           # Features
+  y = trainY_vec,           # Target
+  importance = TRUE,    # Enable variable importance
+  ntree = 500           
+)
+
+# 4. Making Predictions on the Test Set
+rfPred <- predict(rfModel, testX)
+
+# 5. Evaluating Model Performance
+# postResample works for both regression and classification
+
+testY_vec <- testY$ph
+performance <- postResample(pred = rfPred, obs = testY_vec)
+
+# Display the Performance Metrics
+print(performance)
+
+
+```
+
+
+
+
+
+```{r}
+
+train_control <- trainControl(
+  method = "cv",           # Use cross-validation
+  number = 5,              # 5-fold cross-validation
+  verboseIter = FALSE,      # Optional: show training progress
+  search = "grid"          # Perform grid search for hyperparameter tuning
+)
+
+set.seed(123)
+knn_model <- train(
+  x = X_train,
+  y = y_train,
+  method = "knn",
+  tuneGrid = k_values,
+  trControl = train_control,
+)
+
+plot(knn_model)
+```
+
+
+
+## Final results
+
+
+```{r}
+# Calculate RMSE for Neural Network Model
+rmse_nnet <- RMSE(predict(model_nnet, test), test$ph)
+
+# Calculate RMSE for Tree-Based Model
+rmse_tree2 <- RMSE(predict(model_tree2, test), test$ph)
+
+# Calculate RMSE for Linear Model
+rmse_lm1 <- RMSE(predict(model_lm1, test), test$ph)
+
+# Calculate RMSE for Random Forest Model
+rmse_rf <- RMSE(rfPred, testY_vec)
+
+# Display the RMSE Values
+cat("Neural Network RMSE:", RMSE(predict(model_nnet, test), test$ph), "\n")
+cat("Tree-Based Model RMSE:", RMSE(predict(model_tree2, test), test$ph), "\n")
+cat("Linear Model RMSE:", RMSE(predict(model_lm1, test), test$ph), "\n")
+cat("Random Forest RMSE:", RMSE(rfPred, testY_vec), "\n")
+cat("KNN:", RMSE(test_predictions, y_test), "\n")
+
+
+
+```
+
+
+
+
+
