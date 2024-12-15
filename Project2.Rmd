@@ -291,132 +291,111 @@ for (plot in cat_plots) {
 
 # Data Pre-Processing
 
-
-Step 1: Identify numeric columns for transformations
+Split the data into testing and training sets. 
 
 ```{r}
-# Step 1: Identify numeric columns for transformations
-numeric_columns <- X %>% select_if(is.numeric)
+train_index <- createDataPartition(y, p = 0.75, list = FALSE)
+
+X_train <- X[train_index, ]
+X_test <- X[-train_index, ]
+
+y_train <- y[train_index]
+y_test <- y[-train_index]
 ```
 
-Step 2: Apply Yeo-Johnson transformation (for non-normality)
+Apply the Yeo-Johnson transformation. 
 
 ```{r}
-preProcess_numeric <- preProcess(numeric_columns, method = "YeoJohnson")
-X[names(numeric_columns)] <- predict(preProcess_numeric, numeric_columns)
+numeric_features <- sapply(X, is.numeric)
+
+# fit the Yeo-Johnson transformation using training data
+preprocess_params <- preProcess(X_train[, numeric_features],
+                                method = "YeoJohnson")
+
+# pply the transformation to training and testing data
+X_train[, numeric_features] <- predict(preprocess_params,
+                                       X_train[, numeric_features])
+X_test[, numeric_features] <- predict(preprocess_params,
+                                    X_test[, numeric_features])
 ```
 
-Step 3: Check for outliers using interquartile range (IQR) method
+Use robust scaling to scale the data:
 
 ```{r}
-check_outliers <- function(df) {
-  df %>%
-    summarise(across(where(is.numeric), ~ sum(. > (quantile(., 0.75) + 1.5 * IQR(.)) |
-                                      . < (quantile(., 0.25) - 1.5 * IQR(.)), na.rm = TRUE)))
+# only use medians and iqrs from training data
+medians <- apply(X_train[, numeric_features], 2, median)
+iqrs <- apply(X_train[, numeric_features], 2, IQR)
+
+# performs the robust scaling using the IQRs and medians
+robust_scale <- function(data, medians, iqrs) {
+  scaled_data <- sweep(data, 2, medians, "-")  
+  scaled_data <- sweep(scaled_data, 2, iqrs, "/") 
+  return(scaled_data)
 }
 
-outlier_counts <- check_outliers(X)
-outlier_counts
+# transform the training and testing data
+X_train[, numeric_features] <- robust_scale(X_train[, numeric_features],
+                                           medians, iqrs)
+X_test[, numeric_features] <- robust_scale(X_test[, numeric_features], 
+                                          medians, iqrs)
 ```
 
-Step 4: Scale numeric data using robust scaling (median and IQR)
+Finds all pairs of highly correlated variables ($|r| > 0.7$) and randomly removes one variable from each pair. 
 
 ```{r}
-robust_scale <- function(df) {
-  df %>% mutate(across(where(is.numeric), ~ (. - median(.)) / IQR(.), .names = "{.col}_scaled"))
-}
-
-
-X <- robust_scale(X)
+high_corr_indices <- findCorrelation(corr_matrix, cutoff = 0.7, names = TRUE)
+X_train <- X_train[, !names(X_train) %in% high_corr_indices]
+X_test <- X_test[, !names(X_test) %in% high_corr_indices]
 ```
 
-Step 5: Check for multicollinearity using correlation matrix
+Make new variables (and update old ones) using the transformed data:
 
 ```{r}
-cor_matrix <- X %>% select_if(is.numeric) %>% cor()
+X <- rbind(X_train, X_test)
+train <- X_train
+train$PH <- y_train
+test <- X_test
+test$PH <- y_test
 ```
 
-Visualize the correlation matrix
+Check again for outliers:
 
 ```{r}
-cor_matrix_plot <- cor_matrix %>%
-  as.data.frame() %>%
-  rownames_to_column(var = "Variable") %>%
-  pivot_longer(-Variable, names_to = "Correlated_Variable", values_to = "Correlation") %>%
-  filter(Variable != Correlated_Variable, abs(Correlation) > 0.7) %>%
-  ggplot(aes(x = Variable, y = Correlated_Variable, fill = Correlation)) +
-  geom_tile(color = "white") +
-  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+outlier_counts <- count_outliers(X)
+outlier_counts <- data.frame(
+  Column = names(outlier_counts),
+  Outliers = as.numeric(outlier_counts)
+)
+outlier_counts <- na.omit(outlier_counts)
+
+
+ggplot(outlier_counts, aes(x = reorder(Column, -Outliers), y = Outliers)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
   theme_minimal() +
-  labs(title = "Correlation Matrix", x = "", y = "")
-
-print(cor_matrix_plot)
+  labs(
+    title = "# of Outliers Present in Predictor Fields",
+    x = "Variable Name",
+    y = "Number of Outliers"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
 ```
 
-Identify highly correlated variables (threshold = 0.7)
+Check again for normal distributions:
 
 ```{r}
-find_highly_correlated <- function(cor_matrix, threshold = 0.7) {
-  cor_pairs <- as.data.frame(as.table(cor_matrix)) %>%
-    filter(Var1 != Var2, abs(Freq) > threshold)
-  cor_pairs
-}
-high_corr <- find_highly_correlated(cor_matrix)
-high_corr
+normality_results <- test_normality(X)
+normality_results
 ```
 
-
-Drop one variable from each highly correlated pair:
-
+Check again for multicollinearity:
 
 ```{r}
-vars_to_remove <- unique(high_corr$Var2) # Replace with actual variable names if needed
-# X <- X %>% select(-all_of(vars_to_remove, .env = environment()))
-```
-
-
-Step 6: Reassess normality, outlier counts, and multicollinearity. Normality after transformation: 
-
-```{r}
-shapiro_test_results <- lapply(X %>% select_if(is.numeric), shapiro.test)
-normality_summary <- sapply(shapiro_test_results, function(x) x$p.value)
-normality_summary
-```
-
-Outlier reassessment: 
-
-```{r}
-outlier_counts_after <- check_outliers(X)
-outlier_counts_after
-```
-
-Correlation reassessment:
-
-```{r}
-cor_matrix_after <- X %>% select_if(is.numeric) %>% cor()
-```
-
-Ensure multicollinearity is addressed: 
-
-```{r}
-cor_matrix_plot_after <- cor_matrix_after %>%
-  as.data.frame() %>%
-  rownames_to_column(var = "Variable") %>%
-  pivot_longer(-Variable, names_to = "Correlated_Variable", values_to = "Correlation") %>%
-  filter(Variable != Correlated_Variable, abs(Correlation) > 0.7) %>%
-  ggplot(aes(x = Variable, y = Correlated_Variable, fill = Correlation)) +
-  geom_tile(color = "white") +
-  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
-  theme_minimal() +
-  labs(title = "Correlation Matrix (After Adjustment)", x = "", y = "")
-
-print(cor_matrix_plot_after)
-```
-
-Save the preprocessed data for modeling: 
-```{r}
-# Save the preprocessed data for modeling
-write.csv(X, "preprocessed_student_data.csv", row.names = FALSE)
+corr_matrix <- cor(select(X, where(is.numeric)))
+ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
+  theme(
+    axis.text.x = element_text(size = 6),  
+    axis.text.y = element_text(size = 6)  
+  )
 ```
 
 
