@@ -1,39 +1,79 @@
 ---
-title: "Project2"
+title: "ABC Beverage Company PH Predictors"
 date: "2024-12-09"
+author: " Chafiaa Nadour, Darwhin Gomez, John Ledesma, NFN TENZIN DAKAR, Puja Roy, Will Jasmine"
 output:
   html_document:
     toc: true
     toc_float:
       collapsed: false
       smooth_scroll: false
-  pdf_document: default
+    code_folding: hide
+    fig_width: 12
+    fig_height: 9
+    theme: cerulean
+  pdf_document:
+    fig_width: 12
+    fig_height: 9
 ---
 
-# Packages and Setup
+# ABC Beverage Company
 
-```{r}
+**Introduction and Abstract**
+
+In response to new regulations requiring ABC Beverage to better understand our manufacturing process and predictive factors for PH levels, our data science team analyzed historical production data to build a reliable forecasting model. The goal was to identify the key factors influencing PH and create accurate predictions to support compliance and process optimization.
+
+**Methodology**
+
+We started by cleaning the data, addressing missing values, removing duplicates, and encoding categorical variables. Numerical features were standardized to ensure consistency. For exploratory data analysis, we visualized the data, checked for outliers, and analyzed correlations between features.
+
+Next, we trained and tested several models including linear regression, decision trees, neural networks, random forests, K-Nearest Neighbors (KNN), and Support Vector Machines (SVM). Model performance was evaluated using RMSE and R-squared metrics.
+
+**Final Model and Key Findings**
+
+The random forest model delivered the best performance with an R-squared of 0.65 and an RMSE of 0.10. The top five features driving PH predictions were usage_cont, filler_level, temperature, brand_codeC, and carb_flow. SHAP analysis confirmed their importance and provided deeper insights into their impact on PH levels.
+
+PH forecasts have been generated using the final model and added to the StudentEvaluation.xlsx file for further review and action.
+
+## Packages and Setup
+
+```{r packages}
 library(tidyverse)
 library(dplyr)
 library(readxl)
 library(caret)
 library(ggcorrplot)
 library(gridExtra)
+library(janitor)
+library(nnet)
+library(fastshap)
+library(ggplot2)
+library(reshape2)
+library(randomForest)
+library(rpart)
+set.seed(12345) 
+knitr::opts_chunk$set(
+  warning = FALSE,   
+  message = FALSE,   
+  echo = TRUE,       
+  fig.width = 8,    
+  fig.height = 6     
+)
 ```
 
-# Data Cleaning
+## Data Cleaning
 
-
-```{r}
+```{r load_data}
 # Load the specific sheet from the first Excel file
 training_data <- read_excel("StudentData.xlsx", sheet = "Subset")
 
 # Load the specific sheet from the second Excel file
 testing_data <- read_excel("StudentEvaluation.xlsx", sheet = "Subset (2)")
 
+
 ```
 
-```{r}
+```{r cleaning}
 # right away, remove any observations with no PH value.
 
 training_data <-training_data[!is.na(training_data[['PH']]), ]
@@ -42,34 +82,38 @@ X <- select(training_data, -PH)
 y <- training_data$PH
 
 # no PH values are provided in studentEvaluation.xlsx, so we cannot use it
-# for testing. We can only use it to make predictions. 
-eval_X <- select(testing_data, -PH)
+# for testing. We can only use it to make predictions.
 ```
 
-```{r}
+```{r cleaning1}
+eval_X <- select(testing_data, -PH)
+eval_X <- eval_X %>% drop_na()
+```
+
+```{r data_structure}
 # Inspect the structure of the data
 glimpse(X)
 glimpse(eval_X)
 ```
 
-```{r}
+```{r is_missing}
 # Check for missing values
 sum(is.na(X))
 sum(is.na(eval_X))
 ```
 
-```{r}
+```{r summary_data}
 # View a summary of the data
 summary(X)
 summary(eval_X)
 ```
 
-```{r}
+```{r view_head}
 head(X)
 head(eval_X)
 ```
 
-```{r}
+```{r drop_na}
 # Remove rows with missing data
 y <- y[complete.cases(X)] 
 X <- X %>% drop_na()
@@ -77,7 +121,7 @@ X <- X %>% drop_na()
 eval_X <- eval_X %>% drop_na()
 ```
 
-```{r}
+```{r standarf_name}
 # Standardize column names
 X <- X %>% rename_all(tolower) %>% 
   rename_all(gsub, pattern = " ", replacement = "_")
@@ -85,13 +129,13 @@ eval_X <- eval_X %>% rename_all(tolower) %>%
   rename_all(gsub, pattern = " ", replacement = "_")
 ```
 
-```{r}
+```{r distinct_crows}
 # remove duplicates
 X <- X %>% distinct()
 eval_X <- eval_X %>% distinct()
 ```
 
-```{r}
+```{r uniqe_rm}
 # remove the columns that only have 1 unique value
 
 single_value_cols <- sapply(X, function(col) length(unique(col)) == 1)
@@ -100,8 +144,7 @@ eval_X <- eval_X[, !single_value_cols, drop = FALSE]
 
 ```
 
-
-```{r}
+```{r missing2}
 missing_train <- sapply(X, function(col) sum(is.na(col)))
 missing_test <- sapply(eval_X, function(col) sum(is.na(col)))
 
@@ -109,7 +152,7 @@ print(missing_train)
 print(missing_test)
 ```
 
-```{r}
+```{r factors}
 # Convert character columns to factors and ensure date columns are correctly formatted
 X <- X %>%
   mutate(across(where(is.character), as.factor))
@@ -118,7 +161,7 @@ eval_X <- eval_X %>%
   mutate(across(where(is.character), as.factor))
 ```
 
-```{r}
+```{r encode}
 # one-hot-encode the brand_code field with dummy variables
 encode_var <- function(df, col){
   ohm <- model.matrix(~ . - 1, data = df[, col, drop = FALSE])
@@ -131,19 +174,16 @@ X <- encode_var(X, 'brand_code')
 eval_X <- encode_var(eval_X, 'brand_code')
 ```
 
-```{r}
+```{r types}
 # Data types
 str(X)
 ```
 
+## EDA
 
+The cell below creates a function that can be used to count the number of outliers in each column of a dataframe:
 
-
-# EDA
-
-The cell below creates a function that can be used to count the number of outliers in each column of a dataframe: 
-
-```{r}
+```{r outliers1}
 count_outliers <- function(dataframe) {
   outlier_counts <- sapply(dataframe, function(column) {
     if (is.numeric(column)) {
@@ -163,7 +203,7 @@ count_outliers <- function(dataframe) {
 
 The `count_outliers` function is used below to plot the number of outliers present in each predictor field:
 
-```{r}
+```{r outliers}
 outlier_counts <- count_outliers(X)
 outlier_counts <- data.frame(
   Column = names(outlier_counts),
@@ -184,9 +224,9 @@ ggplot(outlier_counts, aes(x = reorder(Column, -Outliers), y = Outliers)) +
 
 ```
 
-Next, the cell below includes function that tests whether or not each column within the dataframe is normal. 
+Next, the cell below includes function that tests whether or not each column within the dataframe is normal.
 
-```{r}
+```{r norm_shapiro}
 test_normality <- function(dataframe) {
   results <- lapply(dataframe, function(column) {
     if (is.numeric(column)) {
@@ -218,9 +258,9 @@ normality_results <- test_normality(X)
 normality_results
 ```
 
-The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity. 
+The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity.
 
-```{r}
+```{r corr_matrix}
 corr_matrix <- cor(select(X, where(is.numeric)))
 ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   theme(
@@ -229,16 +269,16 @@ ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   )
 ```
 
-The cell below produces scatterplots of each explanatory field with the predictor variable PH. Each scatterplot includes the correlation coefficent and a best fit line relating the two fields. 
+The cell below produces scatterplots of each explanatory field with the predictor variable PH. Each scatterplot includes the correlation coefficent and a best fit line relating the two fields.
 
-```{r, message=FALSE}
+```{r num_plots, fig.height=2, fig.width=3, message=FALSE}
 plot_scatter_with_fit <- function(X, y) {
   plots <- list() 
   
   for (col in names(X)) {
     correlation <- cor(X[[col]], y)  
     plot <- ggplot(data = data.frame(x = X[[col]], y = y), aes(x = x, y = y)) +
-      geom_point() +
+      geom_point(alpha=.02) +
       geom_smooth(method = "lm", se = FALSE, color = "red") +  
       labs(
         subtitle = paste("Correlation:", round(correlation, 2)),
@@ -261,7 +301,7 @@ for (plot in scatter_plots) {
 
 The cell below plots the distributions of the categorical features in `X`:
 
-```{r, message=FALSE}
+```{r, cat_plots, message=FALSE}
 plot_categorical_distributions <- function(df) {
   # Identify categorical columns
   categorical_columns <- 
@@ -289,11 +329,11 @@ for (plot in cat_plots) {
 }
 ```
 
-# Data Pre-Processing
+## Data Pre-Processing
 
-Split the data into testing and training sets. 
+Split the data into testing and training sets.
 
-```{r}
+```{r data_partition}
 train_index <- createDataPartition(y, p = 0.75, list = FALSE)
 
 X_train <- X[train_index, ]
@@ -303,9 +343,9 @@ y_train <- y[train_index]
 y_test <- y[-train_index]
 ```
 
-Apply the Yeo-Johnson transformation. 
+Apply the Yeo-Johnson transformation.
 
-```{r}
+```{r trans_form}
 numeric_features <- sapply(X, is.numeric)
 
 # fit the Yeo-Johnson transformation using training data
@@ -321,7 +361,7 @@ X_test[, numeric_features] <- predict(preprocess_params,
 
 Use robust scaling to scale the data:
 
-```{r}
+```{r scaling}
 # only use medians and iqrs from training data
 medians <- apply(X_train[, numeric_features], 2, median)
 iqrs <- apply(X_train[, numeric_features], 2, IQR)
@@ -340,9 +380,9 @@ X_test[, numeric_features] <- robust_scale(X_test[, numeric_features],
                                           medians, iqrs)
 ```
 
-Finds all pairs of highly correlated variables ($|r| > 0.7$) and randomly removes one variable from each pair. 
+Finds all pairs of highly correlated variables ($|r| > 0.7$) and randomly removes one variable from each pair.
 
-```{r}
+```{r corr_pairs}
 high_corr_indices <- findCorrelation(corr_matrix, cutoff = 0.7, names = TRUE)
 X_train <- X_train[, !names(X_train) %in% high_corr_indices]
 X_test <- X_test[, !names(X_test) %in% high_corr_indices]
@@ -350,7 +390,7 @@ X_test <- X_test[, !names(X_test) %in% high_corr_indices]
 
 Make new variables (and update old ones) using the transformed data:
 
-```{r}
+```{r bind_sets}
 X <- rbind(X_train, X_test)
 train <- X_train
 train$PH <- y_train
@@ -360,7 +400,7 @@ test$PH <- y_test
 
 Check again for outliers:
 
-```{r}
+```{r outliers2}
 outlier_counts <- count_outliers(X)
 outlier_counts <- data.frame(
   Column = names(outlier_counts),
@@ -382,14 +422,14 @@ ggplot(outlier_counts, aes(x = reorder(Column, -Outliers), y = Outliers)) +
 
 Check again for normal distributions:
 
-```{r}
+```{r normality}
 normality_results <- test_normality(X)
 normality_results
 ```
 
 Check again for multicollinearity:
 
-```{r}
+```{r corr_matrix_pp}
 corr_matrix <- cor(select(X, where(is.numeric)))
 ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   theme(
@@ -398,5 +438,436 @@ ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   )
 ```
 
+We now have scaled, transformed and removed mutlti collenaer pairs from our data, we can proceed to building models.
+
+## Modeling
+
+The first models used is a simple Linear Regression
+
+```{r modeling_Lm}
+
+model_lm1 <- lm(train$PH ~ ., train)
+summary(model_lm1)
 
 
+```
+
+Decision Tree
+
+```{r tree}
+model_tree1 <- rpart(train$PH ~., data = train)
+
+predict(model_tree1, test)
+
+```
+
+```{r tree_pred}
+RMSE(predict(model_tree1, test), test$PH)
+```
+
+Plotting Tree1
+
+```{r tree_plots}
+plot(model_tree1, uniform=TRUE, compress=FALSE, margin=.015)
+text(model_tree1, all=TRUE, cex=.5)
+```
+
+Neural Network
+
+```{r nnet}
+my.grid <- expand.grid(decay = c(0.5,0,1), size=c(5,6,7))
+
+model_nnet <- train(PH ~ ., data=train, method="nnet",
+      maxit=500, tuneGrid = my.grid, trace =F, linout = 1)
+
+```
+
+```{r nnt_stats}
+print(model_nnet)
+```
+
+Random Forest
+
+library(caret)
+
+```{r preds}
+RMSE(predict(model_nnet, test), test$PH)
+RMSE(predict(model_tree1, test), test$PH)
+RMSE(predict(model_lm1, test), test$PH)
+
+```
+
+```{r Random_forrest}
+# Load Necessary Libraries
+library(caret)
+library(randomForest)
+
+
+
+# 1. Combine Features and Target for Training
+train$PH <- y_train
+
+# 2. Training the Random Forest Model
+rfModel <- randomForest(
+  x = train[, setdiff(names(train), "PH")],  # Features (exclude the target variable)
+  y = train$PH,                             # Target variable
+  importance = TRUE,                        # Enable variable importance
+  ntree = 1500                               # Number of trees
+)
+
+# 3. Combine Features and Target for Testing
+test$PH <- y_test
+
+# 4. Making Predictions on the Test Set
+rfPred <- predict(rfModel, test[, setdiff(names(test), "PH")])
+
+# 5. Evaluating Model Performance
+testY_vec <- test$PH
+performance <- postResample(pred = rfPred, obs = testY_vec)
+
+# Display the Performance Metrics
+print(performance)
+
+
+
+```
+
+```{r KNN}
+
+
+#  Define Cross-Validation Control
+train_control <- trainControl(
+  method = "cv",          
+  number = 5,             
+  verboseIter = FALSE,    
+  search = "grid"         
+)
+
+#   Grid of Hyperparameters for k-Values
+k_values <- expand.grid(k = c(3, 5, 7, 9, 11))  
+
+#  Train the KNN Model
+
+knn_model <- train(
+  x = X_train,            
+  y = y_train,            
+  method = "knn",         
+  tuneGrid = k_values,    
+  trControl = train_control  
+)
+
+#  Plot the KNN Model Performance
+plot(knn_model)
+
+
+
+```
+
+```{r svm}
+# Train SVM with radial kernel
+svm_model <- train(
+  PH ~ ., 
+  data = train, 
+  method = "svmRadial",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 5
+)
+
+```
+
+```{r svm_summary}
+svm_model
+```
+
+```{r svm_eval}
+# Predict and evaluate
+svm_pred <- predict(svm_model, test)
+svm_rmse <- RMSE(svm_pred, test$PH)
+svm_r2 <- R2(svm_pred, test$PH)
+
+# Display metrics
+cat("SVM Model RMSE:", svm_rmse, "\n")
+cat("SVM Model R-Squared:", svm_r2, "\n")
+
+
+```
+
+## Model Analysis and Explanatory features
+
+```{r Evalution_results}
+
+
+# Calculate RMSE and R-squared for Neural Network Model
+rmse_nnet <- RMSE(predict(model_nnet, test), test$PH)
+rsq_nnet <- R2(predict(model_nnet, test), test$PH)
+
+# Calculate RMSE and R-squared for Tree-Based Model
+rmse_tree1 <- RMSE(predict(model_tree1, test), test$PH)
+rsq_tree1 <- R2(predict(model_tree1, test), test$PH)
+
+# Calculate RMSE and R-squared for Linear Model
+rmse_lm1 <- RMSE(predict(model_lm1, test), test$PH)
+rsq_lm1 <- R2(predict(model_lm1, test), test$PH)
+
+# Calculate RMSE and R-squared for Random Forest Model
+rmse_rf <- RMSE(rfPred, test$PH)
+rsq_rf <- R2(rfPred, test$PH)
+
+# Calculate RMSE and R-squared for KNN Model
+rmse_knn <- RMSE(predict(knn_model, test), test$PH)
+rsq_knn <- R2(predict(knn_model, test), test$PH)
+
+
+# Create a Data Frame of RMSE and R-squared Values
+model_performance <- data.frame(
+  Model = c("Neural Network", "Tree-Based", "Linear Model", "Random Forest", "KNN", "SVM"),
+  RMSE = c(rmse_nnet, rmse_tree1, rmse_lm1, rmse_rf, rmse_knn,svm_rmse),
+  R_Squared = c(rsq_nnet, rsq_tree1, rsq_lm1, rsq_rf, rsq_knn,svm_r2)
+)
+
+# Display the Performance Data Frame
+model_performance <- model_performance %>%
+  arrange(RMSE, desc(R_Squared))
+
+# Print the sorted model_performance data frame
+print(model_performance)
+
+
+```
+
+After Tuning the different models we conclude that best preforming model is the Random Forrest Model with an R_Squared of 0.65 and RMSE of 0.10
+
+```{r var_imp}
+
+
+# Extract variable of importance
+var_importance <- importance(rfModel)
+
+importance_df <- data.frame(
+  Variable = rownames(var_importance),
+  Importance = var_importance[, "IncNodePurity"]
+)
+# Order
+
+importance_df <- importance_df[order(importance_df$Importance, decreasing = TRUE), ]
+#ploting
+
+
+ggplot(importance_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Importance Variables in Random Forest",
+       x = "Variable",
+       y = "Importance (IncNodePurity)") +
+  theme_minimal()
+
+```
+
+```{r shap_analysis}
+
+
+# Define the prediction function for the Random Forest model
+pred_wrapper <- function(object, newdata) {
+  predict(object, newdata = newdata)
+}
+
+# Compute SHAP values for the test set
+shap_values <- fastshap::explain(
+  object = rfModel,
+  X = as.data.frame(test[, -which(names(test) == "PH")]),
+  pred_wrapper = pred_wrapper
+)
+
+# Convert SHAP values to a data frame
+shap_df <- as.data.frame(shap_values)
+shap_df$Observation <- 1:nrow(shap_df)
+
+# Calculate mean absolute SHAP values for each feature to determine importance
+shap_importance <- colMeans(abs(shap_df[, -ncol(shap_df)]))
+shap_importance <- sort(shap_importance, decreasing = TRUE)
+ordered_features <- names(shap_importance)
+
+# Melt the SHAP values data frame to long format for ggplot
+shap_long <- melt(shap_df, id.vars = "Observation", variable.name = "Feature", value.name = "SHAP")
+
+# Convert Feature to a factor ordered by importance (flipped)
+shap_long$Feature <- factor(shap_long$Feature, levels = rev(ordered_features))
+
+# Plot the SHAP values with important features at the top
+ggplot(shap_long, aes(x = Feature, y = SHAP, fill = Feature)) +
+  geom_boxplot() +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "SHAP Values for Features Ordered by Importance",
+       y = "SHAP Value",
+       x = "Features") +
+  theme(legend.position = "none")
+
+```
+
+```{r Cross_Refrencing}
+
+
+# top num vars for plotting correlations 
+numerical_vars <- c("usage_cont", "filler_level", "temperature","fill_pressure", "carb_flow")
+
+# Calculate correlation coefficients for numeric variables
+correlations <- sapply(numerical_vars, function(var) cor(train[[var]], train$PH, use = "complete.obs"))
+print("Correlations of PH and top numerical variables")
+correlations
+
+
+
+# Select the relevant columns
+data_subset <- train[, c("PH", numerical_vars)]
+
+# Pivot the data to long format for faceting
+data_long <- pivot_longer(data_subset, cols = all_of(numerical_vars), names_to = "Variable", values_to = "Value")
+
+# Create the facet plot
+ggplot(data_long, aes(x = Value, y = PH)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", color = "blue", se = TRUE) +
+  facet_wrap(~ Variable, scales = "free", ncol = 2) +
+  labs(title = "Relationships Between PH and Selected Variables",
+       x = "Feature Value",
+       y = "PH",
+        ) +
+  theme_minimal()
+  
+
+
+# Boxplot for the categorical variable 'brand_codeC'
+
+ggplot(train, aes(x = as.factor(brand_codeC), y = PH)) +
+    geom_boxplot(fill = "lightblue") +
+    labs(title = "Relationship between PH and brand_codeC",
+         x = "brand_codeC",
+         y = "PH") +
+    theme_minimal()
+  
+  
+
+
+
+```
+
+## Final Thoughts on the Top Variables for Predicting PH
+
+Combining insights from the variable importance plot, SHAP values, and correlation plots, we can make informed conclusions about how our top 5 variables influence the Random Forest model's predictions for PH:
+
+**usage_cont**
+
+-   Importance: Ranked the most important variable in the Random Forest model.
+
+-   SHAP Insight: SHAP values show both positive and negative impacts on PH, suggesting variability in its effect.
+
+-   Correlation Plot: Shows a negative correlation with PH. Higher usage_cont values lead to lower PH levels.
+
+-   Conclusion: usage_cont is a strong predictor, likely capturing flow rate and system efficiency, which impact acidity levels.
+
+**filler_level**
+
+-   Importance: The second most important variable.
+
+-   SHAP Insight: SHAP values suggest it has a consistent positive influence on PH.
+
+-   Correlation Plot: Indicates a slight positive correlation. Higher filler levels tend to increase PH.
+
+-   Conclusion: Variations in filler levels affect ingredient concentration, influencing PH balance.
+
+**temperature**
+
+-   Importance: The third most important variable.
+
+-   SHAP Insight: SHAP values indicate a negative influence on PH.
+
+-   Correlation Plot: Shows a clear negative correlation. Higher temperature leads to lower PH.
+
+-   Conclusion: Temperature impacts carbonation and chemical reactions, affecting the acidity and lowering PH.
+
+**brand_codeC**
+
+-   Importance: The fourth most important variable.
+
+-   SHAP Insight: SHAP values suggest a strong negative impact when Brand C is present.
+
+-   Boxplot: PH is consistently lower when brand_codeC = 1 (Brand C is present).
+
+-   Conclusion: The formulation or process used by Brand C leads to lower PH levels compared to other brands.
+
+**fill_pressure**
+
+-   Importance: The fifth most important variable.
+
+-   SHAP Insight: SHAP values show a negative impact on PH.
+
+-   Correlation Plot: Displays a negative correlation. Higher fill pressure tends to decrease PH levels.
+
+-   Conclusion: Fill pressure affects the pressure conditions during filling, which can influence ingredient concentration and acidity, thereby lowering PH.
+
+**carb_flow**
+
+-   Importance: The sixth most important variable.
+
+-   SHAP Insight: SHAP values show a positive impact on PH.
+
+-   Correlation Plot: Displays a slight positive correlation. Higher carb_flow increases PH.
+
+-   Conclusion: Carb flow affects the amount of dissolved CO₂, altering acidity and thereby increasing PH.
+
+**Summary of Insights:**
+
+**usage_cont** and temperature have strong negative relationships with **PH**.
+
+**filler_level** and **carb_flow** exhibit positive influences on **PH**.
+
+**fill_pressure** negatively influences **PH**.
+
+**brand_codeC** distinctly lowers **PH**.
+
+**Conclusion:**
+
+In conclusion, while the Random Forest model is the best performer for predicting PH, we need to be clear about its limitations. The model’s R-squared of 0.65 and RMSE of 0.10 are the best scores among the models we trained and tested. But with 35% of the variance in PH left unexplained, there’s room for improvement.
+
+Future analysis should focus on filling the gaps in the data or applying imputation techniques for missing values. We should also consider adding more features or refining existing ones to capture more of what drives PH levels. Right now, the forecasts are based on a model that doesn’t include imputations, and that’s something stakeholders should keep in mind.
+
+The team is confident in the insights delivered so far, but with more complete data and some adjustments, we can make even better predictions in the future.
+
+## Forecasts
+
+```{r forecast_preprocess}
+# Ensure preprocessing is applied to eval_X
+
+# Apply Yeo-Johnson transformation to eval_X
+eval_X[, numeric_features] <- predict(preprocess_params, eval_X[, numeric_features])
+
+# Apply robust scaling to eval_X
+eval_X[, numeric_features] <- robust_scale(eval_X[, numeric_features], medians, iqrs)
+```
+
+```{r forecast2}
+# Remove highly correlated variables from eval_X
+eval_X <- eval_X[, !names(eval_X) %in% high_corr_indices]
+
+# Make predictions on the eval_X dataset using the Random Forest model
+eval_predictions <- predict(rfModel, eval_X)
+
+# Display the predicted PH values
+print("Predicted PH values:")
+print(eval_predictions)
+```
+
+```{r forecast3}
+# Add the predictions to the eval_X dataset
+eval_X$PH_Predicted <- eval_predictions
+```
+
+```{r export}
+# Export the dataset with predictions to a new Excel file
+write.csv(eval_X, "StudentEvaluation_WithForecasts.csv", row.names = FALSE)
+
+# Confirm export completion
+cat("Forecasts successfully generated and exported to 'StudentEvaluation_WithForecasts.csv'.\n")
+
+```

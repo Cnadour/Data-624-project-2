@@ -25,7 +25,6 @@ library(gridExtra)
 
 # Data Cleaning
 
-
 ```{r}
 # Load the specific sheet from the first Excel file
 training_data <- read_excel("StudentData.xlsx", sheet = "Subset")
@@ -103,7 +102,6 @@ eval_X <- eval_X[, !single_value_cols, drop = FALSE]
 
 ```
 
-
 ```{r}
 missing_train <- sapply(X, function(col) sum(is.na(col)))
 missing_test <- sapply(eval_X, function(col) sum(is.na(col)))
@@ -139,12 +137,9 @@ eval_X <- encode_var(eval_X, 'brand_code')
 str(X)
 ```
 
-
-
-
 # EDA
 
-The cell below creates a function that can be used to count the number of outliers in each column of a dataframe: 
+The cell below creates a function that can be used to count the number of outliers in each column of a dataframe:
 
 ```{r}
 count_outliers <- function(dataframe) {
@@ -187,7 +182,7 @@ ggplot(outlier_counts, aes(x = reorder(Column, -Outliers), y = Outliers)) +
 
 ```
 
-Next, the cell below includes function that tests whether or not each column within the dataframe is normal. 
+Next, the cell below includes function that tests whether or not each column within the dataframe is normal.
 
 ```{r}
 test_normality <- function(dataframe) {
@@ -221,7 +216,7 @@ normality_results <- test_normality(X)
 normality_results
 ```
 
-The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity. 
+The cell below produces a correlation matrix to show the correlations between all pairs of predictor variables, helping to assess the level of multicollinearity.
 
 ```{r}
 corr_matrix <- cor(dplyr::select(X, where(is.numeric)))
@@ -232,7 +227,7 @@ ggcorrplot(corr_matrix, lab = FALSE, title = "Correlation Matrix") +
   )
 ```
 
-The cell below produces scatterplots of each explanatory field with the predictor variable PH. Each scatterplot includes the correlation coefficent and a best fit line relating the two fields. 
+The cell below produces scatterplots of each explanatory field with the predictor variable PH. Each scatterplot includes the correlation coefficent and a best fit line relating the two fields.
 
 ```{r, message=FALSE}
 plot_scatter_with_fit <- function(X, y) {
@@ -293,7 +288,7 @@ for (plot in cat_plots) {
 
 ```
 
-##  Models building:
+## Models building:
 
 ```{r}
 
@@ -319,7 +314,7 @@ ingle_value_cols <- sapply(X, function(col) length(unique(col)) == 1)
 X <- X[, !single_value_cols, drop = FALSE]
 ```
 
-## traing data 
+## traing data
 
 ```{r}
 
@@ -343,7 +338,6 @@ train_up <- train_up %>% select(-Class)
 
 ```
 
-
 ```{r}
 
 # linear regression
@@ -354,7 +348,6 @@ summary(model_lm1)
 
 ```
 
-
 ```{r}
 
 model_lm2 <- lm(ph ~ . -alch_rel -air_pressurer -pressure_vacuum -density
@@ -362,7 +355,8 @@ model_lm2 <- lm(ph ~ . -alch_rel -air_pressurer -pressure_vacuum -density
 summary(model_lm2)
 
 ```
-##  Throught our backward elimination process we counldn't improve R-squared. Next we will check the reliability of the model using our test dataset.
+
+## Throught our backward elimination process we counldn't improve R-squared. Next we will check the reliability of the model using our test dataset.
 
 ```{r}
 
@@ -370,14 +364,14 @@ predict(model_lm1, test)
 
 ```
 
-
 ```{r}
 
 RMSE(predict(model_lm1, test), test$ph)
 
 ```
 
-##  Decision Tree
+## Decision Tree
+
 ```{r}
 
 # # Tree with selected variables based on Linear Regression model1::
@@ -389,12 +383,10 @@ predict(model_tree1, test)
 
 ```
 
-
 ```{r}
 
 RMSE(predict(model_tree1, test), test$ph)
 ```
-
 
 ```{r}
 
@@ -408,18 +400,15 @@ predict(model_tree2, test)
 
 ```
 
-
 ```{r}
 RMSE(predict(model_tree2, test), test$ph)
 
 ```
 
-
 ```{r}
 plot(model_tree1, uniform=TRUE, compress=FALSE, margin=.015)
 text(model_tree1, all=TRUE, cex=.5)
 ```
-
 
 ```{r}
 
@@ -427,10 +416,10 @@ plot(model_tree2, uniform=TRUE, compress=FALSE, margin=.015)
 text(model_tree2, all=TRUE, cex=.5)
 
 ```
+
 ## Tree 2 is better model with higher RMSE 0.1335446
 
-
-# Neutral model: 
+# Neutral model:
 
 ```{r}
 
@@ -443,24 +432,21 @@ model_nnet <- train(ph ~ carb_volume, data=train, method="nnet",
 
 ```
 
-
 ```{r}
 
 predict(model_nnet, test)
 
 ```
 
-
 ```{r}
 RMSE(predict(model_nnet, test), test$ph)
 ```
-##  Best model is Neutral model 
 
+## Best model is Neutral model
 
 ## Random Forest
+
 library(caret)
-
-
 
 ```{r}
 RMSE(predict(model_nnet, test), test$ph)
@@ -468,7 +454,6 @@ RMSE(predict(model_tree2, test), test$ph)
 RMSE(predict(model_lm1, test), test$ph)
 
 ```
-
 
 ```{r}
 # Load Necessary Libraries
@@ -500,10 +485,6 @@ print(performance)
 
 ```
 
-
-
-
-
 ```{r}
 
 train_control <- trainControl(
@@ -525,10 +506,7 @@ knn_model <- train(
 plot(knn_model)
 ```
 
-
-
 ## Final results
-
 
 ```{r}
 # Calculate RMSE for Neural Network Model
@@ -553,8 +531,3 @@ cat("KNN:", RMSE(test_predictions, y_test), "\n")
 
 
 ```
-
-
-
-
-
